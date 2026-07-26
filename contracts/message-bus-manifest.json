@@ -1,0 +1,55 @@
+{
+  "service": "kart-payment-service",
+  "exchanges": [
+    { "name": "payment.exchange", "type": "topic", "durable": true },
+    { "name": "payment.dlx", "type": "topic", "durable": true }
+  ],
+  "externalExchanges": [
+    { "name": "order.exchange", "type": "topic", "durable": true }
+  ],
+  "publishedEvents": [
+    { "eventType": "PaymentCompleted", "exchange": "payment.exchange", "routingKey": "payment.intent.completed" },
+    { "eventType": "PaymentFailed", "exchange": "payment.exchange", "routingKey": "payment.intent.failed" },
+    { "eventType": "RefundIssued", "exchange": "payment.exchange", "routingKey": "payment.refund.issued" },
+    { "eventType": "ChargebackReceived", "exchange": "payment.exchange", "routingKey": "payment.chargeback.received" }
+  ],
+  "queues": [
+    {
+      "name": "payment.order-events.queue",
+      "durable": true,
+      "bindings": [
+        { "exchange": "order.exchange", "routingKey": "order.order.created" }
+      ],
+      "deadLetter": { "exchange": "payment.dlx", "routingKey": "payment.order-events.dlq" },
+      "retryLadder": {
+        "requeueTo": "payment.order-events.queue",
+        "tiers": [
+          { "name": "payment.order-events.retry.30s", "ttlMs": 30000 },
+          { "name": "payment.order-events.retry.5m", "ttlMs": 300000 }
+        ]
+      }
+    },
+    {
+      "name": "payment.read-model-projection.queue",
+      "durable": true,
+      "bindings": [
+        { "exchange": "payment.exchange", "routingKey": "payment.intent.#" },
+        { "exchange": "payment.exchange", "routingKey": "payment.refund.#" },
+        { "exchange": "payment.exchange", "routingKey": "payment.chargeback.#" }
+      ],
+      "deadLetter": { "exchange": "payment.dlx", "routingKey": "payment.read-model-projection.dlq" },
+      "retryLadder": {
+        "requeueTo": "payment.read-model-projection.queue",
+        "tiers": [
+          { "name": "payment.read-model-projection.retry.30s", "ttlMs": 30000 },
+          { "name": "payment.read-model-projection.retry.5m", "ttlMs": 300000 }
+        ]
+      }
+    }
+  ],
+  "deadLetterQueues": [
+    { "name": "payment.order-events.dlq", "exchange": "payment.dlx", "routingKey": "payment.order-events.dlq" },
+    { "name": "payment.read-model-projection.dlq", "exchange": "payment.dlx", "routingKey": "payment.read-model-projection.dlq" }
+  ],
+  "_comment": "Source of truth for this service's entire RabbitMQ topology (event-contract.md). This corrects the stale draft at kart-platform/docs/services/kart-payment-service/message-bus-manifest.json, which incorrectly claimed Payment 'consumes no events' - Payment's own approved requirement-spec.md/architecture.md/event-contract.md all clearly state it consumes OrderCreated asynchronously (that consumption is what actually triggers ChargePayment, per architecture.md's Sync/Async Resolution). PaymentCompleted/PaymentFailed/RefundIssued/ChargebackReceived are all published via this service's own EF Core/PostgreSQL transactional outbox (OutboxRelayHostedService), which retries indefinitely until RabbitMQ is reachable rather than dead-lettering - so, per the same convention used across the platform, published events appear only in publishedEvents, never with a DLQ of their own here (their consumers - Order, Notification, Analytics - each declare their own per-event DLQ in their own manifests, per event-standards.md's 'never a shared/global DLQ' rule). payment.read-model-projection.queue is this service's own internal async pipeline: it self-consumes every event this service just published on payment.exchange to keep the MongoDB denormalized read model (CQRS query side) in sync with the PostgreSQL write side - the user's explicit CQRS requirement, a deliberate deviation from database-design.md's own 'no read model needed' conclusion (see contracts/README.md), following the same 'self-consumed event' shape kart-offer-service already uses for its own CQRS projection."
+}

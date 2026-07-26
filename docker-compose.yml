@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: kart_payment_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432" # host 5432 may already be bound by another local service
+    volumes:
+      - payment-postgres-data:/var/lib/postgresql/data
+
+  mongo:
+    image: mongo:7.0
+    ports:
+      - "27018:27017" # host 27017 may already be bound by another local service
+    volumes:
+      - payment-mongo-data:/data/db
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      # RabbitMQ's default "guest" user is restricted to loopback-only connections - a container
+      # reaching it over the compose bridge network does not count as loopback, so a dedicated
+      # non-guest user is required (same fix applied in tests/IntegrationTests/PaymentApiFactory.cs).
+      RABBITMQ_DEFAULT_USER: "payment"
+      RABBITMQ_DEFAULT_PASS: "payment"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ConnectionStrings__PaymentDatabase: "Host=postgres;Port=5432;Database=kart_payment_dev;Username=postgres;Password=postgres"
+      Mongo__ConnectionString: "mongodb://mongo:27017"
+      Mongo__Database: "kart_payment_read_dev"
+      RabbitMq__HostName: "rabbitmq"
+      RabbitMq__UserName: "payment"
+      RabbitMq__Password: "payment"
+      Gateway__SigningSecrets__simulated: "dev-simulated-gateway-signing-secret"
+    depends_on:
+      - postgres
+      - mongo
+      - rabbitmq
+
+volumes:
+  payment-postgres-data:
+  payment-mongo-data:
