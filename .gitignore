@@ -151,3 +151,7 @@ obj/
 *.received.*
 TestResults/
 
+# Per-developer local overrides (currently just GlobalConfig:Path) — machine-specific,
+# never committed. Commit appsettings.Local.json.example instead.
+appsettings.Local.json
+
