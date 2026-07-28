@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Kart.Shared.Messaging;
 using KartPaymentService.Infrastructure.Persistence.ReadModel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;

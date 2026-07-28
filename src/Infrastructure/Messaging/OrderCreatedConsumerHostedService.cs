@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Kart.Shared.Messaging;
 using KartPaymentService.Application.Common;
 using KartPaymentService.Application.Features.ChargePayment;
 using KartPaymentService.Infrastructure.Security;

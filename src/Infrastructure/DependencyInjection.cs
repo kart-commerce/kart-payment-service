@@ -1,3 +1,4 @@
+using Kart.Shared.Messaging;
 using KartPaymentService.Application.Common.Interfaces;
 using KartPaymentService.Infrastructure.GatewayReconciliationJob;
 using KartPaymentService.Infrastructure.Idempotency;
@@ -12,7 +13,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
-using RabbitMQ.Client;
 
 namespace KartPaymentService.Infrastructure;
 
@@ -104,28 +104,15 @@ public static class DependencyInjection
     private static void AddMessaging(IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<RabbitMqOptions>(configuration.GetSection("RabbitMq"));
-        services.AddSingleton(sp =>
-        {
-            var options = sp.GetRequiredService<IOptions<RabbitMqOptions>>().Value;
-            var manifestPath = Path.IsPathRooted(options.ManifestPath)
-                ? options.ManifestPath
-                : Path.Combine(AppContext.BaseDirectory, options.ManifestPath);
-            return MessageBusManifestLoader.Load(manifestPath);
-        });
-        services.AddSingleton<IConnectionFactory>(sp =>
-        {
-            var options = sp.GetRequiredService<IOptions<RabbitMqOptions>>().Value;
-            return new ConnectionFactory
-            {
-                HostName = options.HostName,
-                Port = options.Port,
-                UserName = options.UserName,
-                Password = options.Password,
-                DispatchConsumersAsync = true,
-            };
-        });
 
-        services.AddHostedService<RabbitMqTopologyStartupHostedService>();
+        services.AddKartMessageBusManifest(sp => sp.GetRequiredService<IOptions<RabbitMqOptions>>().Value.ManifestPath);
+        services.AddKartRabbitMqConnectionFactory(sp =>
+        {
+            var options = sp.GetRequiredService<IOptions<RabbitMqOptions>>().Value;
+            return new RabbitMqConnectionSettings(options.HostName, options.Port, options.UserName, options.Password);
+        });
+        services.AddKartRabbitMqTopologyStartup();
+
         services.AddHostedService<OutboxRelayHostedService>();
         services.AddHostedService<OrderCreatedConsumerHostedService>();
         services.AddHostedService<ReadModelProjectionConsumerHostedService>();
