@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/TestResults/
+.git/
+.github/
+.vs/
+.vscode/
+.idea/
+**/*.user
+
+# Machine-specific, gitignored -- must never leak a real .env-equivalent into the image
+appsettings.Local.json
+**/appsettings.Local.json
