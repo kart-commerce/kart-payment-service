@@ -12,13 +12,27 @@ public sealed class LoggingBehavior<TRequest, TResponse>(ILogger<LoggingBehavior
     {
         var requestName = typeof(TRequest).Name;
         var stopwatch = Stopwatch.StartNew();
+
+        // Checkpoint-logging taxonomy stage 3 ("<Command>HandlerStarted", first line inside
+        // Handle()) generalized here rather than duplicated in every handler - this behavior
+        // already wraps every MediatR request platform-wide. Mirrors kart-identity-service's
+        // LoggingBehaviour.
+        logger.LogInformation(
+            "Stage {Stage}: {RequestName} handler started",
+            $"{requestName}HandlerStarted",
+            requestName);
+
         try
         {
             return await next();
         }
         finally
         {
-            logger.LogInformation("{RequestName} completed in {ElapsedMilliseconds}ms", requestName, stopwatch.ElapsedMilliseconds);
+            logger.LogInformation(
+                "Stage {Stage}: {RequestName} completed in {ElapsedMilliseconds}ms",
+                $"{requestName}Completed",
+                requestName,
+                stopwatch.ElapsedMilliseconds);
         }
     }
 }

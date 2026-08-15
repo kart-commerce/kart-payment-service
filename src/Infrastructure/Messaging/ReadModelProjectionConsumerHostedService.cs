@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Kart.Shared.Messaging;
+using Kart.Shared.Observability;
 using KartPaymentService.Infrastructure.Persistence.ReadModel;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -24,6 +25,11 @@ public sealed class ReadModelProjectionConsumerHostedService : BackgroundService
 {
     private const string QueueName = "payment.read-model-projection.queue";
     private const string RetryCountHeader = "x-payment-read-model-projection-retry-count";
+    private const string FlowName = "PaymentProcessingFraudCheck";
+
+    /// <summary>Same event-type-based Flow split as OutboxRelayHostedService - PaymentCompleted/PaymentFailed are the customer-facing checkout events (business-flows.md flow #1), everything else belongs to flow #6's own dedicated Payment Processing &amp; Fraud Check flow.</summary>
+    private const string ShoppingJourneyFlowName = "NormalShoppingPurchaseJourney";
+    private static readonly HashSet<string> ShoppingJourneyEventTypes = ["PaymentCompleted", "PaymentFailed"];
 
     private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(10);
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -78,12 +84,28 @@ public sealed class ReadModelProjectionConsumerHostedService : BackgroundService
 
     private async Task OnMessageReceivedAsync(IModel channel, BasicDeliverEventArgs deliverEventArgs, CancellationToken stoppingToken)
     {
+        var eventType = _manifest.EventTypeForRoutingKey(deliverEventArgs.RoutingKey);
+
+        // Previously missing entirely - this self-consumption hop (this service's own
+        // OutboxRelayHostedService publish, immediately consumed back by this same service) never
+        // continued the W3C trace stored on the outbox row/stamped on the AMQP headers, so every
+        // read-model-projection log was a disconnected root trace instead of the same TraceId the
+        // original charge/refund/webhook request started with. Mirrors OrderCreatedConsumerHostedService's
+        // identical fix for the cross-service hop.
+        using var activity = RabbitMqTraceContext.StartConsumeActivity(QueueName, deliverEventArgs.BasicProperties);
+        using var flowScope = KartFlowContext.Push(ShoppingJourneyEventTypes.Contains(eventType) ? ShoppingJourneyFlowName : FlowName);
+
         try
         {
             using var scope = _scopeFactory.CreateScope();
             var writer = scope.ServiceProvider.GetRequiredService<ReadModelProjectionWriter>();
             var json = Encoding.UTF8.GetString(deliverEventArgs.Body.Span);
-            var eventType = _manifest.EventTypeForRoutingKey(deliverEventArgs.RoutingKey);
+
+            _logger.LogInformation(
+                "Stage {Stage}: {EventType} event consumed from {Queue} for read-model projection",
+                "ReadModelProjectionEventConsumed",
+                eventType,
+                QueueName);
 
             await ProjectAsync(writer, eventType, json, stoppingToken);
 
@@ -95,7 +117,7 @@ public sealed class ReadModelProjectionConsumerHostedService : BackgroundService
         }
     }
 
-    private static async Task ProjectAsync(ReadModelProjectionWriter writer, string eventType, string json, CancellationToken cancellationToken)
+    private async Task ProjectAsync(ReadModelProjectionWriter writer, string eventType, string json, CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow;
         switch (eventType)
@@ -103,25 +125,33 @@ public sealed class ReadModelProjectionConsumerHostedService : BackgroundService
             case "PaymentCompleted":
             {
                 var payload = Deserialize<PaymentCompletedPayload>(json);
+                _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
                 await writer.UpsertOnCompletedAsync(payload.PaymentIntentId, payload.OrderId, payload.TxnId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
+                _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "completed");
                 break;
             }
             case "PaymentFailed":
             {
                 var payload = Deserialize<PaymentFailedPayload>(json);
+                _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
                 await writer.UpsertOnFailedAsync(payload.PaymentIntentId, payload.OrderId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
+                _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "failed");
                 break;
             }
             case "RefundIssued":
             {
                 var payload = Deserialize<RefundIssuedPayload>(json);
+                _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, refund {RefundId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, payload.RefundId, eventType);
                 await writer.AppendRefundAsync(payload.PaymentIntentId, payload.RefundId, payload.Amount, now, now, cancellationToken);
+                _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, refund {RefundId} appended", "ReadModelPersisted", payload.PaymentIntentId, payload.RefundId);
                 break;
             }
             case "ChargebackReceived":
             {
                 var payload = Deserialize<ChargebackReceivedPayload>(json);
+                _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
                 await writer.MarkDisputedAsync(payload.PaymentIntentId, now, cancellationToken);
+                _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "disputed");
                 break;
             }
             default:

@@ -3,6 +3,7 @@ using KartPaymentService.Application.Common.Interfaces;
 using KartPaymentService.Application.Features.IngestGatewayWebhook;
 using KartPaymentService.Domain.Payments;
 using KartPaymentService.Domain.Webhooks;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -16,7 +17,7 @@ public sealed class IngestGatewayWebhookCommandHandlerTests
     private readonly IPaymentIntentRepository _paymentIntents = Substitute.For<IPaymentIntentRepository>();
     private readonly IUnitOfWork _unitOfWork = Substitute.For<IUnitOfWork>();
 
-    private IngestGatewayWebhookCommandHandler CreateHandler() => new(_webhookEvents, _paymentIntents, _unitOfWork, new FakeTimeProvider(Now));
+    private IngestGatewayWebhookCommandHandler CreateHandler() => new(_webhookEvents, _paymentIntents, _unitOfWork, new FakeTimeProvider(Now), NullLogger<IngestGatewayWebhookCommandHandler>.Instance);
 
     [Fact]
     public async Task Handle_DuplicateGatewayEventId_IsIdempotentNoOp_NeverTouchesTheIntent()

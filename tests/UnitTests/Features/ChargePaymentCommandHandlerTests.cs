@@ -4,6 +4,7 @@ using KartPaymentService.Application.Common.Interfaces;
 using KartPaymentService.Application.Features.ChargePayment;
 using KartPaymentService.Domain.Idempotency;
 using KartPaymentService.Domain.Payments;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -25,7 +26,8 @@ public sealed class ChargePaymentCommandHandlerTests
     }
 
     private ChargePaymentCommandHandler CreateHandler() => new(
-        _idempotencyGuard, _gatewayAdapter, _paymentIntents, _unitOfWork, _currentPrincipal, new FakeTimeProvider(Now));
+        _idempotencyGuard, _gatewayAdapter, _paymentIntents, _unitOfWork, _currentPrincipal, new FakeTimeProvider(Now),
+        NullLogger<ChargePaymentCommandHandler>.Instance);
 
     [Fact]
     public async Task Handle_SameKeyReplayed_ReturnsStoredResponseWithoutCallingGatewayAgain()

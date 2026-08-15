@@ -4,6 +4,7 @@ using KartPaymentService.Application.Common.Interfaces;
 using KartPaymentService.Application.Features.RefundPayment;
 using KartPaymentService.Domain.Idempotency;
 using KartPaymentService.Domain.Payments;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -29,7 +30,8 @@ public sealed class RefundPaymentCommandHandlerTests
     }
 
     private RefundPaymentCommandHandler CreateHandler() => new(
-        _idempotencyGuard, _gatewayAdapter, _paymentIntents, _unitOfWork, _currentPrincipal, new FakeTimeProvider(Now));
+        _idempotencyGuard, _gatewayAdapter, _paymentIntents, _unitOfWork, _currentPrincipal, new FakeTimeProvider(Now),
+        NullLogger<RefundPaymentCommandHandler>.Instance);
 
     private static PaymentIntent CompletedIntent(decimal capturedAmount = 100m)
     {

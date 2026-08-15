@@ -20,6 +20,7 @@ public sealed class PaymentOutboxEventConfiguration : IEntityTypeConfiguration<P
         builder.Property(e => e.PublishedAt).HasColumnName("published_at");
         builder.Property(e => e.CreatedBy).HasColumnName("created_by").HasColumnType("text").IsRequired();
         builder.Property(e => e.UpdatedBy).HasColumnName("updated_by").HasColumnType("text").IsRequired();
+        builder.Property(e => e.TraceParent).HasColumnName("trace_parent").HasColumnType("text");
 
         // OutboxRelayHostedService's "pending rows, oldest first" poll.
         builder.HasIndex(e => e.OccurredAt)

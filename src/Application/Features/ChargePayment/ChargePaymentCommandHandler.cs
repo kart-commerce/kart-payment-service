@@ -4,6 +4,7 @@ using KartPaymentService.Application.Common.Interfaces;
 using KartPaymentService.Application.Common.Models;
 using KartPaymentService.Domain.Idempotency;
 using MediatR;
+using Microsoft.Extensions.Logging;
 
 namespace KartPaymentService.Application.Features.ChargePayment;
 
@@ -23,7 +24,8 @@ public sealed class ChargePaymentCommandHandler(
     IPaymentIntentRepository paymentIntents,
     IUnitOfWork unitOfWork,
     ICurrentPrincipal currentPrincipal,
-    TimeProvider timeProvider) : IRequestHandler<ChargePaymentCommand, Result<PaymentIntentViewDto>>
+    TimeProvider timeProvider,
+    ILogger<ChargePaymentCommandHandler> logger) : IRequestHandler<ChargePaymentCommand, Result<PaymentIntentViewDto>>
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -36,14 +38,25 @@ public sealed class ChargePaymentCommandHandler(
         switch (reservation.Outcome)
         {
             case IdempotencyOutcome.Conflict:
+                logger.LogWarning(
+                    "Stage {Stage}: charge rejected, idempotency key {IdempotencyKey} was reused with a different request payload for order {OrderId}",
+                    "IdempotencyKeyConflict",
+                    request.IdempotencyKey,
+                    request.OrderId);
                 return Result.Failure<PaymentIntentViewDto>(Error.Conflict("Idempotency-Key was reused with a different request payload."));
             case IdempotencyOutcome.ReplayHit:
+                logger.LogInformation(
+                    "Stage {Stage}: charge idempotency key {IdempotencyKey} replayed for order {OrderId}, returning stored response",
+                    "IdempotencyKeyReplayHit",
+                    request.IdempotencyKey,
+                    request.OrderId);
                 return Result.Success(JsonSerializer.Deserialize<PaymentIntentViewDto>(reservation.StoredResponseJson!, SerializerOptions)!);
         }
 
         // ReserveOrReplayAsync already persisted the reservation itself, before returning - see
         // EfIdempotencyGuard's own remarks for why that save cannot be deferred to this handler.
         var now = timeProvider.GetUtcNow();
+        logger.LogInformation("Stage {Stage}: gateway charge started for order {OrderId}", "GatewayChargeStarted", request.OrderId);
         var chargeResult = await gatewayAdapter.ChargeAsync(request.GatewayToken, request.Amount, request.Currency, request.IdempotencyKey, cancellationToken);
 
         var intent = Domain.Payments.PaymentIntent.Create(Guid.NewGuid(), request.OrderId, request.GatewayToken, request.Amount, request.Currency, actingPrincipal, now);
@@ -52,14 +65,17 @@ public sealed class ChargePaymentCommandHandler(
         {
             case Common.Interfaces.GatewayOutcome.Succeeded:
                 intent.MarkCompleted(chargeResult.TxnId!, actingPrincipal, now);
+                logger.LogInformation("Stage {Stage}: gateway charge succeeded for order {OrderId}, txn {TxnId}", "GatewayChargeSucceeded", request.OrderId, chargeResult.TxnId);
                 break;
             case Common.Interfaces.GatewayOutcome.Declined:
                 intent.MarkFailed(chargeResult.DeclineReason ?? "declined", actingPrincipal, now);
+                logger.LogInformation("Stage {Stage}: gateway charge declined for order {OrderId}, reason {Reason}", "GatewayChargeDeclined", request.OrderId, chargeResult.DeclineReason);
                 break;
             case Common.Interfaces.GatewayOutcome.Ambiguous:
                 // Left Pending deliberately - requirement-spec Open Question #9 resolution. Never
                 // speculatively publish PaymentFailed; PAY-10's reconciliation job or the webhook
                 // path resolves this later.
+                logger.LogInformation("Stage {Stage}: gateway charge ambiguous for order {OrderId}, left pending", "GatewayChargeAmbiguous", request.OrderId);
                 break;
         }
 
@@ -69,6 +85,7 @@ public sealed class ChargePaymentCommandHandler(
         await idempotencyGuard.ConfirmAsync(request.IdempotencyKey, IdempotencyEndpoint.Charge, JsonSerializer.Serialize(dto, SerializerOptions), cancellationToken);
 
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        logger.LogInformation("Stage {Stage}: payment intent {PaymentIntentId} persisted for order {OrderId} with status {Status}", "PaymentIntentPersisted", intent.Id, request.OrderId, intent.Status);
 
         return Result.Success(dto);
     }
