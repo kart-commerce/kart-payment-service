@@ -38,9 +38,8 @@ public sealed class PaymentsController(ISender sender, ILogger<PaymentsControlle
     {
         using var _ = KartFlowContext.Push(FlowName);
 
-        // Never logs request.GatewayToken - it's an opaque gateway-issued reference (never raw
-        // card data per requirement-spec Domain Invariant #4), but this taxonomy pass still keeps
-        // every log line on this money-moving service to ids/amounts/decision outcomes only.
+        // Never logs request.GatewayToken - it's an opaque gateway-issued reference, never raw
+        // card data (requirement-spec Domain Invariant #4).
         logger.LogInformation(
             "Stage {Stage}: charge request received for order {OrderId}, amount {Amount} {Currency}",
             "ChargeRequestReceived",
@@ -49,8 +48,6 @@ public sealed class PaymentsController(ISender sender, ILogger<PaymentsControlle
             request.Amount.Currency);
 
         var command = new ChargePaymentCommand(request.OrderId, request.Amount.Amount, request.Amount.Currency, request.GatewayToken, idempotencyKey);
-        logger.LogInformation("Stage {Stage}: dispatching ChargePaymentCommand for order {OrderId}", "ChargePaymentCommandDispatched", request.OrderId);
-
         var result = await sender.Send(command, cancellationToken);
         return this.ToActionResult<PaymentIntentViewDto, PaymentIntentViewDto>(result, dto => Ok(dto));
     }
@@ -65,8 +62,6 @@ public sealed class PaymentsController(ISender sender, ILogger<PaymentsControlle
 
         logger.LogInformation("Stage {Stage}: get payment intent request received for {PaymentIntentId}", "GetPaymentIntentRequestReceived", id);
         var query = new GetPaymentIntentQuery(id);
-        logger.LogInformation("Stage {Stage}: dispatching GetPaymentIntentQuery for {PaymentIntentId}", "GetPaymentIntentQueryDispatched", id);
-
         var result = await sender.Send(query, cancellationToken);
         return this.ToActionResult<PaymentIntentViewDto, PaymentIntentViewDto>(result, dto => Ok(dto));
     }
@@ -98,8 +93,6 @@ public sealed class PaymentsController(ISender sender, ILogger<PaymentsControlle
             isSupportAgentRequest);
 
         var command = new RefundPaymentCommand(id, request.Amount.Amount, request.Amount.Currency, idempotencyKey, isSupportAgentRequest);
-        logger.LogInformation("Stage {Stage}: dispatching RefundPaymentCommand for payment intent {PaymentIntentId}", "RefundPaymentCommandDispatched", id);
-
         var result = await sender.Send(command, cancellationToken);
         return this.ToActionResult<RefundViewDto, RefundViewDto>(result, dto => Accepted(dto));
     }

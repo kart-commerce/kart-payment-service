@@ -51,13 +51,7 @@ public sealed class PaymentDbContext : DbContext
     /// Converts every tracked aggregate's pending domain events into `payment_outbox_events` rows
     /// within this same call (design-decisions.md's Event Publication Reliability concern) - the
     /// write and "the event will eventually publish" commit atomically, never as a separate,
-    /// unguarded publish step.
-    ///
-    /// Checkpoint-logging taxonomy stage 6/7 (`&lt;Entity&gt;Persisted` + `&lt;Event&gt;OutboxEventEnqueued`)
-    /// is generalized here, once, rather than duplicated in every handler that mutates a
-    /// PaymentIntent (ChargePayment/RefundPayment/IngestGatewayWebhook/GatewayReconciliationJob all
-    /// funnel through this one conversion choke point) - mirrors how stage 3/4 are generalized in
-    /// LoggingBehavior/ValidationBehavior rather than per-handler. Only logs ids/amounts/event
+    /// unguarded publish step. The persisted+outbox-enqueued log below only logs ids/amounts/event
     /// types - never GatewayToken or any other payment-credential-adjacent field.
     /// </summary>
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

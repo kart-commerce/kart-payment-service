@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace KartPaymentService.Application.Common.Behaviors;
 
-/// <summary>Logs `{RequestName} completed in {ElapsedMilliseconds}ms` for every command/query - deliberately never logs the request/response payload (a charge command carries a gateway token). Mirrors kart-identity-service's `LoggingBehaviour`.</summary>
+/// <summary>Logs `{RequestName} completed in {ElapsedMilliseconds}ms` for every command/query - deliberately never logs the request/response payload (a charge command carries a gateway token).</summary>
 public sealed class LoggingBehavior<TRequest, TResponse>(ILogger<LoggingBehavior<TRequest, TResponse>> logger) : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull
 {
@@ -13,26 +13,13 @@ public sealed class LoggingBehavior<TRequest, TResponse>(ILogger<LoggingBehavior
         var requestName = typeof(TRequest).Name;
         var stopwatch = Stopwatch.StartNew();
 
-        // Checkpoint-logging taxonomy stage 3 ("<Command>HandlerStarted", first line inside
-        // Handle()) generalized here rather than duplicated in every handler - this behavior
-        // already wraps every MediatR request platform-wide. Mirrors kart-identity-service's
-        // LoggingBehaviour.
-        logger.LogInformation(
-            "Stage {Stage}: {RequestName} handler started",
-            $"{requestName}HandlerStarted",
-            requestName);
+        var response = await next();
 
-        try
-        {
-            return await next();
-        }
-        finally
-        {
-            logger.LogInformation(
-                "Stage {Stage}: {RequestName} completed in {ElapsedMilliseconds}ms",
-                $"{requestName}Completed",
-                requestName,
-                stopwatch.ElapsedMilliseconds);
-        }
+        logger.LogInformation(
+            "{RequestName} completed in {ElapsedMilliseconds}ms",
+            requestName,
+            stopwatch.ElapsedMilliseconds);
+
+        return response;
     }
 }

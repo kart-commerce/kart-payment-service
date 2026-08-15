@@ -46,8 +46,6 @@ public sealed class PaymentWebhooksController(ISender sender, ILogger<PaymentWeb
             request.Chargeback?.Amount.Amount,
             request.Chargeback?.Reason);
 
-        logger.LogInformation("Stage {Stage}: dispatching IngestGatewayWebhookCommand for event {GatewayEventId}", "IngestGatewayWebhookCommandDispatched", request.GatewayEventId);
-
         var result = await sender.Send(command, cancellationToken);
         return result.IsSuccess ? Ok() : this.MapFailure(result.Error);
     }

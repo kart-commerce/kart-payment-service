@@ -108,8 +108,6 @@ public sealed class OrderCreatedConsumerHostedService : BackgroundService
             var idempotencyKey = $"order:{payload.OrderId}:charge";
             var command = new ChargePaymentCommand(payload.OrderId, payload.Total, payload.Currency, payload.GatewayToken, idempotencyKey);
 
-            logger.LogInformation("Stage {Stage}: dispatching ChargePaymentCommand for order {OrderId}", "ChargePaymentCommandDispatched", payload.OrderId);
-
             using (CurrentPrincipalContext.SetScope(SystemPrincipals.OrderSagaPaymentConsumer))
             {
                 var result = await sender.Send(command, stoppingToken);
