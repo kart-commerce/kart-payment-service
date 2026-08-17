@@ -90,7 +90,7 @@ public sealed class RefundPaymentCommandHandler(
                 return Result.Failure<RefundViewDto>(Error.NotFound($"PaymentIntent '{request.PaymentIntentId}' not found."));
             }
 
-            var refundResult = intent.RequestRefund(request.Amount, actingPrincipal, now);
+            var refundResult = intent.RequestRefund(new Domain.Payments.Money(request.Amount, new Domain.Payments.CurrencyCode(request.Currency)), actingPrincipal, now);
             if (refundResult.IsFailure)
             {
                 logger.LogWarning(
@@ -104,7 +104,7 @@ public sealed class RefundPaymentCommandHandler(
             }
 
             refund = refundResult.Value;
-            currency = intent.Currency;
+            currency = intent.CapturedAmount.Currency.Code;
 
             await unitOfWork.SaveChangesAsync(cancellationToken);
             await unitOfWork.CommitTransactionAsync(cancellationToken);

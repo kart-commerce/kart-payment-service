@@ -9,8 +9,11 @@ public sealed class PaymentIntentRepository(PaymentDbContext dbContext) : IPayme
     public Task<PaymentIntent?> GetByIdAsync(Guid id, CancellationToken cancellationToken) =>
         dbContext.PaymentIntents.Include(p => p.Refunds).FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
-    public Task<PaymentIntent?> GetByOrderIdAsync(string orderId, CancellationToken cancellationToken) =>
-        dbContext.PaymentIntents.Include(p => p.Refunds).FirstOrDefaultAsync(p => p.OrderId == orderId, cancellationToken);
+    public Task<PaymentIntent?> GetByOrderIdAsync(string orderId, CancellationToken cancellationToken)
+    {
+        var id = new OrderId(orderId);
+        return dbContext.PaymentIntents.Include(p => p.Refunds).FirstOrDefaultAsync(p => p.OrderId == id, cancellationToken);
+    }
 
     public async Task<PaymentIntent?> GetByIdForUpdateAsync(Guid id, CancellationToken cancellationToken)
     {

@@ -59,12 +59,19 @@ public sealed class ChargePaymentCommandHandler(
         logger.LogInformation("Stage {Stage}: gateway charge started for order {OrderId}", "GatewayChargeStarted", request.OrderId);
         var chargeResult = await gatewayAdapter.ChargeAsync(request.GatewayToken, request.Amount, request.Currency, request.IdempotencyKey, cancellationToken);
 
-        var intent = Domain.Payments.PaymentIntent.Create(Guid.NewGuid(), request.OrderId, request.GatewayToken, request.Amount, request.Currency, actingPrincipal, now);
+        var currency = new Domain.Payments.CurrencyCode(request.Currency);
+        var intent = Domain.Payments.PaymentIntent.Create(
+            Guid.NewGuid(),
+            new Domain.Payments.OrderId(request.OrderId),
+            new Domain.Payments.GatewayToken(request.GatewayToken),
+            new Domain.Payments.Money(request.Amount, currency),
+            actingPrincipal,
+            now);
 
         switch (chargeResult.Outcome)
         {
             case Common.Interfaces.GatewayOutcome.Succeeded:
-                intent.MarkCompleted(chargeResult.TxnId!, actingPrincipal, now);
+                intent.MarkCompleted(new Domain.Payments.GatewayTransactionId(chargeResult.TxnId!), actingPrincipal, now);
                 logger.LogInformation("Stage {Stage}: gateway charge succeeded for order {OrderId}, txn {TxnId}", "GatewayChargeSucceeded", request.OrderId, chargeResult.TxnId);
                 break;
             case Common.Interfaces.GatewayOutcome.Declined:
@@ -92,11 +99,11 @@ public sealed class ChargePaymentCommandHandler(
 
     private static PaymentIntentViewDto ToDto(Domain.Payments.PaymentIntent intent) => new(
         intent.Id,
-        intent.OrderId,
+        intent.OrderId.Value,
         intent.Status.ToString().ToLowerInvariant(),
-        new MoneyDto(intent.CapturedAmount, intent.Currency),
-        intent.TxnId,
-        intent.TotalRefunded,
+        new MoneyDto(intent.CapturedAmount.Amount, intent.CapturedAmount.Currency.Code),
+        intent.TxnId?.Value,
+        intent.TotalRefunded.Amount,
         intent.Chargeback is not null,
         intent.CreatedAt);
 }

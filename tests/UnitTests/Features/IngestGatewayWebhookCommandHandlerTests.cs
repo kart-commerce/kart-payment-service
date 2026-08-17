@@ -36,7 +36,7 @@ public sealed class IngestGatewayWebhookCommandHandlerTests
     [Fact]
     public async Task Handle_ChargeSucceeded_MarksIntentCompleted()
     {
-        var intent = PaymentIntent.Create(Guid.NewGuid(), "order-1", "tok_good", 50m, "USD", "system:test", Now);
+        var intent = PaymentIntent.Create(Guid.NewGuid(), new OrderId("order-1"), new GatewayToken("tok_good"), new Money(50m, new CurrencyCode("USD")), "system:test", Now);
         _paymentIntents.GetByIdAsync(intent.Id, Arg.Any<CancellationToken>()).Returns(intent);
 
         var handler = CreateHandler();
@@ -50,8 +50,8 @@ public sealed class IngestGatewayWebhookCommandHandlerTests
     [Fact]
     public async Task Handle_ChargebackReceived_MarksIntentDisputed()
     {
-        var intent = PaymentIntent.Create(Guid.NewGuid(), "order-1", "tok_good", 50m, "USD", "system:test", Now);
-        intent.MarkCompleted("txn_1", "system:test", Now);
+        var intent = PaymentIntent.Create(Guid.NewGuid(), new OrderId("order-1"), new GatewayToken("tok_good"), new Money(50m, new CurrencyCode("USD")), "system:test", Now);
+        intent.MarkCompleted(new GatewayTransactionId("txn_1"), "system:test", Now);
         _paymentIntents.GetByIdAsync(intent.Id, Arg.Any<CancellationToken>()).Returns(intent);
 
         var handler = CreateHandler();
@@ -65,8 +65,8 @@ public sealed class IngestGatewayWebhookCommandHandlerTests
     [Fact]
     public async Task Handle_OutOfOrderTransition_ReturnsConflict_TreatedAsRecognizedNoOp()
     {
-        var intent = PaymentIntent.Create(Guid.NewGuid(), "order-1", "tok_good", 50m, "USD", "system:test", Now);
-        intent.MarkCompleted("txn_1", "system:test", Now); // already terminal
+        var intent = PaymentIntent.Create(Guid.NewGuid(), new OrderId("order-1"), new GatewayToken("tok_good"), new Money(50m, new CurrencyCode("USD")), "system:test", Now);
+        intent.MarkCompleted(new GatewayTransactionId("txn_1"), "system:test", Now); // already terminal
         _paymentIntents.GetByIdAsync(intent.Id, Arg.Any<CancellationToken>()).Returns(intent);
 
         var handler = CreateHandler();

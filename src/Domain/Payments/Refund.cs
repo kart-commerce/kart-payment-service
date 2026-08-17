@@ -12,7 +12,14 @@ public sealed class Refund
 
     public Guid PaymentIntentId { get; private set; }
 
-    /// <summary>No separate currency column (database-design.md's `refunds` table) - always denominated in the parent `PaymentIntent.Currency`.</summary>
+    /// <summary>
+    /// No separate currency column (database-design.md's `refunds` table) - always denominated in
+    /// the parent `PaymentIntent.CapturedAmount`'s currency. Deliberately a plain <see cref="decimal"/>,
+    /// not <see cref="Money"/> - there is nowhere on this row to store a second currency, and this
+    /// entity is only ever constructed internally by <see cref="PaymentIntent.RequestRefund"/>, which
+    /// has already checked the requested amount's currency against the parent before this type is
+    /// ever touched.
+    /// </summary>
     public decimal Amount { get; private set; }
 
     public RefundStatus Status { get; private set; }

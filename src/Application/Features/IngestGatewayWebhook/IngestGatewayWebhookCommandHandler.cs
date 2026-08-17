@@ -59,11 +59,20 @@ public sealed class IngestGatewayWebhookCommandHandler(
 
         var transitionResult = eventType switch
         {
-            GatewayEventType.ChargeSucceeded => intent.MarkCompleted(request.TxnId!, SystemPrincipals.PaymentGatewayWebhookConsumer, now),
+            GatewayEventType.ChargeSucceeded => intent.MarkCompleted(new Domain.Payments.GatewayTransactionId(request.TxnId!), SystemPrincipals.PaymentGatewayWebhookConsumer, now),
             GatewayEventType.ChargeFailed => intent.MarkFailed(request.Reason ?? "gateway_reported_failure", SystemPrincipals.PaymentGatewayWebhookConsumer, now),
             GatewayEventType.RefundSucceeded => intent.MarkRefundSucceeded(request.RefundId!.Value, now),
             GatewayEventType.RefundFailed => intent.MarkRefundFailed(request.RefundId!.Value, now),
-            GatewayEventType.ChargebackReceived => intent.MarkDisputed(request.ChargebackId!, request.ChargebackAmount!.Value, request.ChargebackReason ?? "chargeback", now, SystemPrincipals.PaymentGatewayWebhookConsumer, now),
+            // No separate currency field exists on this command (event-contract.md - a chargeback
+            // is always denominated in the charge's own currency), so the intent's own captured
+            // currency is the only currency a chargeback amount can ever be expressed in here.
+            GatewayEventType.ChargebackReceived => intent.MarkDisputed(
+                new Domain.Payments.ChargebackId(request.ChargebackId!),
+                new Domain.Payments.Money(request.ChargebackAmount!.Value, intent.CapturedAmount.Currency),
+                request.ChargebackReason ?? "chargeback",
+                now,
+                SystemPrincipals.PaymentGatewayWebhookConsumer,
+                now),
             _ => Result.Failure(Error.Validation($"Unhandled gateway event type '{eventType}'.")),
         };
 

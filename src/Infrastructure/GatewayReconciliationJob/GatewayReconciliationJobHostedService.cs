@@ -78,7 +78,7 @@ public sealed class GatewayReconciliationJobHostedService(
             switch (reconciliation.Outcome)
             {
                 case GatewayOutcome.Succeeded:
-                    intent.MarkCompleted(reconciliation.TxnId!, SystemPrincipals.GatewayReconciliationJob, now);
+                    intent.MarkCompleted(new Domain.Payments.GatewayTransactionId(reconciliation.TxnId!), SystemPrincipals.GatewayReconciliationJob, now);
                     logger.LogInformation(
                         "Stage {Stage}: gateway reconciliation succeeded for payment intent {PaymentIntentId}, txn {TxnId}",
                         "GatewayReconciliationSucceeded",
