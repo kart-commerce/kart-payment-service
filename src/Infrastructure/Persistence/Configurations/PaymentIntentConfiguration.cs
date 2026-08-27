@@ -14,13 +14,36 @@ public sealed class PaymentIntentConfiguration : IEntityTypeConfiguration<Paymen
         builder.HasKey(p => p.Id);
         builder.Property(p => p.Id).HasColumnName("id").ValueGeneratedNever();
 
-        builder.Property(p => p.OrderId).HasColumnName("order_id").IsRequired();
+        // OrderId/GatewayToken/TxnId are single-value Value Objects - HasConversion maps each
+        // straight onto the same column the raw primitive used to occupy, so the physical schema
+        // is untouched by the Domain/Payments Value Object refactor.
+        builder.Property(p => p.OrderId)
+            .HasColumnName("order_id")
+            .HasConversion(v => v.Value, v => new OrderId(v))
+            .IsRequired();
         builder.HasIndex(p => p.OrderId).IsUnique(); // "exactly one PaymentIntent per order" (database-design.md)
 
-        builder.Property(p => p.GatewayToken).HasColumnName("gateway_token").IsRequired();
-        builder.Property(p => p.TxnId).HasColumnName("txn_id");
-        builder.Property(p => p.CapturedAmount).HasColumnName("captured_amount").HasColumnType("numeric(12,2)").IsRequired();
-        builder.Property(p => p.Currency).HasColumnName("currency").IsRequired();
+        builder.Property(p => p.GatewayToken)
+            .HasColumnName("gateway_token")
+            .HasConversion(v => v.Value, v => new GatewayToken(v))
+            .IsRequired();
+
+        builder.Property(p => p.TxnId)
+            .HasColumnName("txn_id")
+            .HasConversion(
+                v => v.HasValue ? v.Value.Value : null,
+                v => v == null ? (GatewayTransactionId?)null : new GatewayTransactionId(v));
+
+        // Money is a complex property (EF Core 8) - Amount/Currency map onto the same two
+        // pre-existing columns a bare decimal + string used to occupy; no schema change.
+        builder.ComplexProperty(p => p.CapturedAmount, money =>
+        {
+            money.Property(m => m.Amount).HasColumnName("captured_amount").HasColumnType("numeric(12,2)").IsRequired();
+            money.Property(m => m.Currency)
+                .HasConversion(v => v.Code, v => new CurrencyCode(v))
+                .HasColumnName("currency")
+                .IsRequired();
+        });
 
         builder.Property(p => p.Status)
             .HasColumnName("status")
@@ -29,7 +52,9 @@ public sealed class PaymentIntentConfiguration : IEntityTypeConfiguration<Paymen
 
         builder.OwnsOne(p => p.Chargeback, chargeback =>
         {
-            chargeback.Property(c => c.ChargebackId).HasColumnName("chargeback_id");
+            chargeback.Property(c => c.ChargebackId)
+                .HasConversion(v => v.Value, v => new ChargebackId(v))
+                .HasColumnName("chargeback_id");
             chargeback.Property(c => c.Amount).HasColumnName("chargeback_amount").HasColumnType("numeric(12,2)");
             chargeback.Property(c => c.Reason).HasColumnName("chargeback_reason");
             chargeback.Property(c => c.ReceivedAt).HasColumnName("chargeback_received_at");

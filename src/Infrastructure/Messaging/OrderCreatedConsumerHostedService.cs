@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.Json;
+using Kart.Shared.Messaging;
+using Kart.Shared.Observability;
 using KartPaymentService.Application.Common;
 using KartPaymentService.Application.Features.ChargePayment;
 using KartPaymentService.Infrastructure.Security;
@@ -28,6 +30,7 @@ public sealed class OrderCreatedConsumerHostedService : BackgroundService
 {
     private const string QueueName = "payment.order-events.queue";
     private const string RetryCountHeader = "x-payment-order-events-retry-count";
+    private const string ShoppingJourneyFlowName = "NormalShoppingPurchaseJourney";
 
     private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(10);
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -82,14 +85,25 @@ public sealed class OrderCreatedConsumerHostedService : BackgroundService
 
     private async Task OnMessageReceivedAsync(IModel channel, BasicDeliverEventArgs deliverEventArgs, CancellationToken stoppingToken)
     {
+        // Previously missing entirely - this consumer never continued the W3C trace carried on
+        // OrderCreated's own message headers, so every span/log from here through the charge
+        // (and the PaymentCompleted/PaymentFailed event this triggers) was a disconnected root
+        // trace, breaking the platform-wide "one TraceId tells the whole order's story" guarantee
+        // for the entire payment leg of every order. Mirrors order-service's own consumers.
+        using var activity = RabbitMqTraceContext.StartConsumeActivity(QueueName, deliverEventArgs.BasicProperties);
+        using var flowScope = KartFlowContext.Push(ShoppingJourneyFlowName);
+
         try
         {
             using var scope = _scopeFactory.CreateScope();
             var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<OrderCreatedConsumerHostedService>>();
             var json = Encoding.UTF8.GetString(deliverEventArgs.Body.Span);
 
             var payload = JsonSerializer.Deserialize<OrderCreatedEventPayload>(json, SerializerOptions)
                 ?? throw new InvalidOperationException("OrderCreated payload deserialized to null.");
+
+            logger.LogInformation("Stage {Stage}: OrderCreated consumed for order {OrderId}", "OrderCreatedEventConsumed", payload.OrderId);
 
             var idempotencyKey = $"order:{payload.OrderId}:charge";
             var command = new ChargePaymentCommand(payload.OrderId, payload.Total, payload.Currency, payload.GatewayToken, idempotencyKey);
@@ -101,6 +115,13 @@ public sealed class OrderCreatedConsumerHostedService : BackgroundService
                 {
                     throw new InvalidOperationException($"ChargePayment failed: {result.Error.Code} - {result.Error.Message}");
                 }
+
+                logger.LogInformation(
+                    "Stage {Stage}: OrderCreated processing completed for order {OrderId}, payment intent {PaymentIntentId} status {Status}",
+                    "OrderCreatedProcessingCompleted",
+                    payload.OrderId,
+                    result.Value.PaymentIntentId,
+                    result.Value.Status);
             }
 
             channel.BasicAck(deliverEventArgs.DeliveryTag, multiple: false);

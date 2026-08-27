@@ -19,17 +19,15 @@ namespace KartPaymentService.Domain.Payments;
 /// </summary>
 public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
 {
-    public string OrderId { get; private set; } = string.Empty;
+    public OrderId OrderId { get; private set; }
 
     /// <summary>Opaque, gateway-issued reference. Never raw card data (requirement-spec Domain Invariant #4).</summary>
-    public string GatewayToken { get; private set; } = string.Empty;
+    public GatewayToken GatewayToken { get; private set; }
 
     /// <summary>Gateway-assigned transaction id, set exactly once on transition to Completed - the `PaymentCompleted.txnId` field.</summary>
-    public string? TxnId { get; private set; }
+    public GatewayTransactionId? TxnId { get; private set; }
 
-    public decimal CapturedAmount { get; private set; }
-
-    public string Currency { get; private set; } = string.Empty;
+    public Money CapturedAmount { get; private set; }
 
     public PaymentIntentStatus Status { get; private set; }
 
@@ -47,20 +45,20 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
 
     public IReadOnlyCollection<Refund> Refunds => _refunds.AsReadOnly();
 
-    public decimal TotalRefunded => _refunds.Where(r => r.Status == RefundStatus.Succeeded).Sum(r => r.Amount);
+    public Money TotalRefunded =>
+        new(_refunds.Where(r => r.Status == RefundStatus.Succeeded).Sum(r => r.Amount), CapturedAmount.Currency);
 
     /// <summary>EF Core materialization only.</summary>
     private PaymentIntent()
     {
     }
 
-    private PaymentIntent(Guid id, string orderId, string gatewayToken, decimal amount, string currency, string actingPrincipal, DateTimeOffset now)
+    private PaymentIntent(Guid id, OrderId orderId, GatewayToken gatewayToken, Money amount, string actingPrincipal, DateTimeOffset now)
     {
         Id = id;
         OrderId = orderId;
         GatewayToken = gatewayToken;
         CapturedAmount = amount;
-        Currency = currency;
         Status = PaymentIntentStatus.Pending;
         CreatedAt = now;
         UpdatedAt = now;
@@ -74,11 +72,11 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
     /// factory's - a retried `OrderCreated` delivery resolves via the idempotency ledger before
     /// ever reaching a second insert here.
     /// </summary>
-    public static PaymentIntent Create(Guid id, string orderId, string gatewayToken, decimal amount, string currency, string actingPrincipal, DateTimeOffset now)
-        => new(id, orderId, gatewayToken, amount, currency, actingPrincipal, now);
+    public static PaymentIntent Create(Guid id, OrderId orderId, GatewayToken gatewayToken, Money amount, string actingPrincipal, DateTimeOffset now)
+        => new(id, orderId, gatewayToken, amount, actingPrincipal, now);
 
     /// <summary>Fired exactly once, only when status reaches Completed. Idempotent no-op on redelivery of the same outcome (edge-cases.md "Gateway Webhook Arriving Out-of-Order or Duplicated").</summary>
-    public Result MarkCompleted(string txnId, string actingPrincipal, DateTimeOffset now)
+    public Result MarkCompleted(GatewayTransactionId txnId, string actingPrincipal, DateTimeOffset now)
     {
         if (Status == PaymentIntentStatus.Completed)
         {
@@ -94,7 +92,7 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
         TxnId = txnId;
         UpdatedAt = now;
         UpdatedBy = actingPrincipal;
-        Raise(new PaymentCompletedDomainEvent(Id, OrderId, txnId, CapturedAmount, Currency, now));
+        Raise(new PaymentCompletedDomainEvent(Id, OrderId.Value, txnId.Value, CapturedAmount.Amount, CapturedAmount.Currency.Code, now));
         return Result.Success();
     }
 
@@ -114,7 +112,7 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
         Status = PaymentIntentStatus.Failed;
         UpdatedAt = now;
         UpdatedBy = actingPrincipal;
-        Raise(new PaymentFailedDomainEvent(Id, OrderId, reason, CapturedAmount, Currency, now));
+        Raise(new PaymentFailedDomainEvent(Id, OrderId.Value, reason, CapturedAmount.Amount, CapturedAmount.Currency.Code, now));
         return Result.Success();
     }
 
@@ -125,9 +123,11 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
     /// pass this check - the transactional DB-level check the repository performs on insert is the
     /// actual race-closer across two different DbContext instances; this is the fast-fail half.
     /// Also the Saga Compensation Gating decision: a refund against a non-terminal intent is
-    /// rejected, never fired unconditionally.
+    /// rejected, never fired unconditionally. The requested amount must be denominated in this
+    /// intent's own captured currency - a currency-mismatched refund is rejected before it ever
+    /// reaches the ceiling check.
     /// </summary>
-    public Result<Refund> RequestRefund(decimal amount, string actingPrincipal, DateTimeOffset now)
+    public Result<Refund> RequestRefund(Money amount, string actingPrincipal, DateTimeOffset now)
     {
         if (Status == PaymentIntentStatus.Disputed)
         {
@@ -139,13 +139,19 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
             return Result.Failure<Refund>(Error.Conflict($"PaymentIntent {Id} has not reached a terminal completed state; refund rejected."));
         }
 
+        if (amount.Currency != CapturedAmount.Currency)
+        {
+            return Result.Failure<Refund>(Error.Conflict(
+                $"Refund currency {amount.Currency} does not match PaymentIntent {Id}'s captured currency {CapturedAmount.Currency}."));
+        }
+
         var committedOrPending = _refunds.Where(r => r.Status != RefundStatus.Failed).Sum(r => r.Amount);
-        if (committedOrPending + amount > CapturedAmount)
+        if (new Money(committedOrPending, CapturedAmount.Currency).Add(amount).IsGreaterThan(CapturedAmount))
         {
             return Result.Failure<Refund>(Error.Conflict($"Refund amount {amount} would exceed the captured amount {CapturedAmount} for PaymentIntent {Id}."));
         }
 
-        var refund = new Refund(Guid.NewGuid(), Id, amount, actingPrincipal, now);
+        var refund = new Refund(Guid.NewGuid(), Id, amount.Amount, actingPrincipal, now);
         _refunds.Add(refund);
         return Result.Success(refund);
     }
@@ -170,7 +176,7 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
         }
 
         refund.MarkSucceeded(now);
-        Raise(new RefundIssuedDomainEvent(Id, refund.Id, OrderId, refund.Amount, Currency, now));
+        Raise(new RefundIssuedDomainEvent(Id, refund.Id, OrderId.Value, refund.Amount, CapturedAmount.Currency.Code, now));
         return Result.Success();
     }
 
@@ -197,8 +203,8 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
         return Result.Success();
     }
 
-    /// <summary>ADR-0012: marks the intent disputed (blocking new refunds) and publishes ChargebackReceived. Idempotent on redelivery of the same chargeback notification. Always denominated in this intent's own <see cref="Currency"/> - database-design.md's schema has no separate chargeback-currency column.</summary>
-    public Result MarkDisputed(string chargebackId, decimal amount, string reason, DateTimeOffset receivedAt, string actingPrincipal, DateTimeOffset now)
+    /// <summary>ADR-0012: marks the intent disputed (blocking new refunds) and publishes ChargebackReceived. Idempotent on redelivery of the same chargeback notification. Always denominated in this intent's own <see cref="CapturedAmount"/> currency - database-design.md's schema has no separate chargeback-currency column, so a currency-mismatched chargeback is rejected rather than silently recorded.</summary>
+    public Result MarkDisputed(ChargebackId chargebackId, Money amount, string reason, DateTimeOffset receivedAt, string actingPrincipal, DateTimeOffset now)
     {
         if (Status == PaymentIntentStatus.Disputed)
         {
@@ -210,11 +216,17 @@ public sealed class PaymentIntent : AggregateRoot, IHasDomainEvents
             return Result.Failure(Error.Conflict("Disputed is only reachable from Completed (a charge that never completed cannot be charged back)."));
         }
 
-        Chargeback = new ChargebackRecord(chargebackId, amount, reason, receivedAt);
+        if (amount.Currency != CapturedAmount.Currency)
+        {
+            return Result.Failure(Error.Conflict(
+                $"Chargeback currency {amount.Currency} does not match PaymentIntent {Id}'s captured currency {CapturedAmount.Currency}."));
+        }
+
+        Chargeback = new ChargebackRecord(chargebackId, amount.Amount, reason, receivedAt);
         Status = PaymentIntentStatus.Disputed;
         UpdatedAt = now;
         UpdatedBy = actingPrincipal;
-        Raise(new ChargebackReceivedDomainEvent(Id, OrderId, chargebackId, amount, Currency, reason, now));
+        Raise(new ChargebackReceivedDomainEvent(Id, OrderId.Value, chargebackId.Value, amount.Amount, amount.Currency.Code, reason, now));
         return Result.Success();
     }
 }

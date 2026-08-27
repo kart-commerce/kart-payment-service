@@ -100,7 +100,8 @@ public sealed class ChargePaymentEndpointTests : IClassFixture<PaymentApiFactory
     {
         using var scope = _factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<PaymentDbContext>();
-        var count = await dbContext.PaymentIntents.CountAsync(p => p.OrderId == orderId);
+        var orderIdValue = new KartPaymentService.Domain.Payments.OrderId(orderId);
+        var count = await dbContext.PaymentIntents.CountAsync(p => p.OrderId == orderIdValue);
         count.Should().Be(1, "the (idempotency_key, endpoint) and payment_intents.order_id unique constraints together must guarantee exactly one charge attempt");
     }
 

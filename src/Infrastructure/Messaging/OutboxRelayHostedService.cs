@@ -1,4 +1,6 @@
 using System.Text;
+using Kart.Shared.Messaging;
+using Kart.Shared.Observability;
 using KartPaymentService.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +22,11 @@ public sealed class OutboxRelayHostedService : BackgroundService
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(10);
     private const int BatchSize = 100;
+    private const string FlowName = "PaymentProcessingFraudCheck";
+
+    /// <summary>PaymentCompleted/PaymentFailed are the customer-facing checkout events (catalog flow #1's own "Payment Success"/"Gateway" steps) — tagged with the shopping journey instead of every other event type this relay publishes (refunds/chargebacks).</summary>
+    private const string ShoppingJourneyFlowName = "NormalShoppingPurchaseJourney";
+    private static readonly HashSet<string> ShoppingJourneyEventTypes = ["PaymentCompleted", "PaymentFailed"];
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConnectionFactory _connectionFactory;
@@ -89,18 +96,37 @@ public sealed class OutboxRelayHostedService : BackgroundService
 
         foreach (var outboxEvent in pending)
         {
+            using var _ = KartFlowContext.Push(ShoppingJourneyEventTypes.Contains(outboxEvent.EventType) ? ShoppingJourneyFlowName : FlowName);
+
             var properties = channel.CreateBasicProperties();
             properties.Persistent = true;
             properties.MessageId = outboxEvent.Id.ToString();
             properties.ContentType = "application/json";
 
+            var exchange = _manifest.ExchangeFor(outboxEvent.EventType);
+            var routingKey = _manifest.RoutingKeyFor(outboxEvent.EventType);
+
+            // `using var` (not an explicit block) so the publish Activity stays current through
+            // the Stage log line below - see kart-order-service's own relay for the identical
+            // fix. Replays the *originating* request's trace (stored at outbox-write time),
+            // never the background poller's own unrelated activity.
+            using var activity = RabbitMqTraceContext.StartPublishActivityFromStoredTraceParent(exchange, routingKey, outboxEvent.TraceParent, properties);
+
             channel.BasicPublish(
-                exchange: _manifest.ExchangeFor(outboxEvent.EventType),
-                routingKey: _manifest.RoutingKeyFor(outboxEvent.EventType),
+                exchange: exchange,
+                routingKey: routingKey,
                 basicProperties: properties,
                 body: Encoding.UTF8.GetBytes(outboxEvent.Payload));
 
             outboxEvent.MarkPublished(DateTimeOffset.UtcNow);
+
+            _logger.LogInformation(
+                "Stage {Stage}: {EventType} outbox event {OutboxId} published to {Exchange}/{RoutingKey}",
+                "OutboxEventPublished",
+                outboxEvent.EventType,
+                outboxEvent.Id,
+                exchange,
+                routingKey);
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);

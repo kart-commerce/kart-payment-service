@@ -1,3 +1,4 @@
+using Kart.Shared.Observability;
 using KartPaymentService.Application.Common;
 using KartPaymentService.Application.Common.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,6 +27,9 @@ public sealed class GatewayReconciliationJobHostedService(
     private static readonly TimeSpan TickInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan StaleThreshold = TimeSpan.FromMinutes(5);
     private const int BatchSize = 50;
+
+    /// <summary>business-flows.md flow #6's own "Settlement/Reconciliation" step - this job is its production implementation for a charge neither the synchronous gateway call nor the webhook path ever confirmed.</summary>
+    private const string FlowName = "PaymentProcessingFraudCheck";
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -60,19 +64,40 @@ public sealed class GatewayReconciliationJobHostedService(
 
         foreach (var intent in stalePending)
         {
+            using var _ = KartFlowContext.Push(FlowName);
+
             var idempotencyKey = $"order:{intent.OrderId}:charge";
+            logger.LogInformation(
+                "Stage {Stage}: reconciling stale-pending payment intent {PaymentIntentId} for order {OrderId}",
+                "GatewayReconciliationStarted",
+                intent.Id,
+                intent.OrderId);
+
             var reconciliation = await gatewayAdapter.ReconcileChargeAsync(idempotencyKey, cancellationToken);
 
             switch (reconciliation.Outcome)
             {
                 case GatewayOutcome.Succeeded:
-                    intent.MarkCompleted(reconciliation.TxnId!, SystemPrincipals.GatewayReconciliationJob, now);
+                    intent.MarkCompleted(new Domain.Payments.GatewayTransactionId(reconciliation.TxnId!), SystemPrincipals.GatewayReconciliationJob, now);
+                    logger.LogInformation(
+                        "Stage {Stage}: gateway reconciliation succeeded for payment intent {PaymentIntentId}, txn {TxnId}",
+                        "GatewayReconciliationSucceeded",
+                        intent.Id,
+                        reconciliation.TxnId);
                     break;
                 case GatewayOutcome.Declined:
                     intent.MarkFailed(reconciliation.DeclineReason ?? "reconciled_decline", SystemPrincipals.GatewayReconciliationJob, now);
+                    logger.LogInformation(
+                        "Stage {Stage}: gateway reconciliation declined for payment intent {PaymentIntentId}, reason {Reason}",
+                        "GatewayReconciliationDeclined",
+                        intent.Id,
+                        reconciliation.DeclineReason);
                     break;
                 case GatewayOutcome.Ambiguous:
-                    logger.LogWarning("PaymentIntent {PaymentIntentId} still ambiguous after gateway reconciliation; will retry.", intent.Id);
+                    logger.LogWarning(
+                        "Stage {Stage}: PaymentIntent {PaymentIntentId} still ambiguous after gateway reconciliation; will retry.",
+                        "GatewayReconciliationAmbiguous",
+                        intent.Id);
                     break;
             }
         }

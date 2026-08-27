@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Kart.Shared.Domain;
 using KartPaymentService.Domain.Payments;
@@ -19,6 +20,16 @@ public sealed class PaymentOutboxEvent : OutboxEventBase
     public string CreatedBy { get; private set; } = string.Empty;
     public string UpdatedBy { get; private set; } = "system:payment-outbox-relay";
 
+    /// <summary>
+    /// W3C traceparent of the request/consumed-message activity that produced this event -
+    /// previously never captured at all, so this relay never propagated the originating order's
+    /// trace onto PaymentCompleted/PaymentFailed/RefundIssued/ChargebackReceived; every downstream
+    /// consumer (order-service, notification-service) saw a disconnected root trace instead of the
+    /// same TraceId the customer's own checkout request started. Nullable - a row written before
+    /// this column existed, or outside any active Activity, has none.
+    /// </summary>
+    public string? TraceParent { get; private set; }
+
     private PaymentOutboxEvent()
     {
     }
@@ -26,6 +37,7 @@ public sealed class PaymentOutboxEvent : OutboxEventBase
     private PaymentOutboxEvent(Guid id, Guid aggregateId, string eventType, string payload, DateTimeOffset occurredAt)
         : base(id, aggregateId, eventType, payload, occurredAt)
     {
+        TraceParent = Activity.Current?.Id;
     }
 
     public static PaymentOutboxEvent FromDomainEvent(IDomainEvent domainEvent, Guid aggregateId, string actingPrincipal)

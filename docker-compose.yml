@@ -34,7 +34,10 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      # ${PAYMENT_PORT} matches kart-devops/ports.env's canonical value for this service --
+      # `source ../kart-devops/ports.env` first to pick it up automatically; the :-8089 fallback
+      # is only for running this repo fully standalone, with no kart-devops checkout alongside it.
+      - "${PAYMENT_PORT:-8089}:8080"
     environment:
       ConnectionStrings__PaymentDatabase: "Host=postgres;Port=5432;Database=kart_payment_dev;Username=postgres;Password=postgres"
       Mongo__ConnectionString: "mongodb://mongo:27017"

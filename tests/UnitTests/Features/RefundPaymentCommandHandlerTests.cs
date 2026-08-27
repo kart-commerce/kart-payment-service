@@ -4,6 +4,7 @@ using KartPaymentService.Application.Common.Interfaces;
 using KartPaymentService.Application.Features.RefundPayment;
 using KartPaymentService.Domain.Idempotency;
 using KartPaymentService.Domain.Payments;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -29,12 +30,13 @@ public sealed class RefundPaymentCommandHandlerTests
     }
 
     private RefundPaymentCommandHandler CreateHandler() => new(
-        _idempotencyGuard, _gatewayAdapter, _paymentIntents, _unitOfWork, _currentPrincipal, new FakeTimeProvider(Now));
+        _idempotencyGuard, _gatewayAdapter, _paymentIntents, _unitOfWork, _currentPrincipal, new FakeTimeProvider(Now),
+        NullLogger<RefundPaymentCommandHandler>.Instance);
 
     private static PaymentIntent CompletedIntent(decimal capturedAmount = 100m)
     {
-        var intent = PaymentIntent.Create(Guid.NewGuid(), "order-1", "tok_good", capturedAmount, "USD", "system:test", Now);
-        intent.MarkCompleted("txn_1", "system:test", Now);
+        var intent = PaymentIntent.Create(Guid.NewGuid(), new OrderId("order-1"), new GatewayToken("tok_good"), new Money(capturedAmount, new CurrencyCode("USD")), "system:test", Now);
+        intent.MarkCompleted(new GatewayTransactionId("txn_1"), "system:test", Now);
         return intent;
     }
 
@@ -94,7 +96,7 @@ public sealed class RefundPaymentCommandHandlerTests
     public async Task Handle_AgainstDisputedIntent_ReturnsConflict()
     {
         var intent = CompletedIntent(100m);
-        intent.MarkDisputed("cb_1", 100m, "fraud", Now, "system:webhook", Now);
+        intent.MarkDisputed(new ChargebackId("cb_1"), new Money(100m, new CurrencyCode("USD")), "fraud", Now, "system:webhook", Now);
         _paymentIntents.GetByIdForUpdateAsync(intent.Id, Arg.Any<CancellationToken>()).Returns(intent);
 
         var handler = CreateHandler();

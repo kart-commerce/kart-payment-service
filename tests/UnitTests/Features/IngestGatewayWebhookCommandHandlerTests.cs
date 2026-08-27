@@ -3,6 +3,7 @@ using KartPaymentService.Application.Common.Interfaces;
 using KartPaymentService.Application.Features.IngestGatewayWebhook;
 using KartPaymentService.Domain.Payments;
 using KartPaymentService.Domain.Webhooks;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -16,7 +17,7 @@ public sealed class IngestGatewayWebhookCommandHandlerTests
     private readonly IPaymentIntentRepository _paymentIntents = Substitute.For<IPaymentIntentRepository>();
     private readonly IUnitOfWork _unitOfWork = Substitute.For<IUnitOfWork>();
 
-    private IngestGatewayWebhookCommandHandler CreateHandler() => new(_webhookEvents, _paymentIntents, _unitOfWork, new FakeTimeProvider(Now));
+    private IngestGatewayWebhookCommandHandler CreateHandler() => new(_webhookEvents, _paymentIntents, _unitOfWork, new FakeTimeProvider(Now), NullLogger<IngestGatewayWebhookCommandHandler>.Instance);
 
     [Fact]
     public async Task Handle_DuplicateGatewayEventId_IsIdempotentNoOp_NeverTouchesTheIntent()
@@ -35,7 +36,7 @@ public sealed class IngestGatewayWebhookCommandHandlerTests
     [Fact]
     public async Task Handle_ChargeSucceeded_MarksIntentCompleted()
     {
-        var intent = PaymentIntent.Create(Guid.NewGuid(), "order-1", "tok_good", 50m, "USD", "system:test", Now);
+        var intent = PaymentIntent.Create(Guid.NewGuid(), new OrderId("order-1"), new GatewayToken("tok_good"), new Money(50m, new CurrencyCode("USD")), "system:test", Now);
         _paymentIntents.GetByIdAsync(intent.Id, Arg.Any<CancellationToken>()).Returns(intent);
 
         var handler = CreateHandler();
@@ -49,8 +50,8 @@ public sealed class IngestGatewayWebhookCommandHandlerTests
     [Fact]
     public async Task Handle_ChargebackReceived_MarksIntentDisputed()
     {
-        var intent = PaymentIntent.Create(Guid.NewGuid(), "order-1", "tok_good", 50m, "USD", "system:test", Now);
-        intent.MarkCompleted("txn_1", "system:test", Now);
+        var intent = PaymentIntent.Create(Guid.NewGuid(), new OrderId("order-1"), new GatewayToken("tok_good"), new Money(50m, new CurrencyCode("USD")), "system:test", Now);
+        intent.MarkCompleted(new GatewayTransactionId("txn_1"), "system:test", Now);
         _paymentIntents.GetByIdAsync(intent.Id, Arg.Any<CancellationToken>()).Returns(intent);
 
         var handler = CreateHandler();
@@ -64,8 +65,8 @@ public sealed class IngestGatewayWebhookCommandHandlerTests
     [Fact]
     public async Task Handle_OutOfOrderTransition_ReturnsConflict_TreatedAsRecognizedNoOp()
     {
-        var intent = PaymentIntent.Create(Guid.NewGuid(), "order-1", "tok_good", 50m, "USD", "system:test", Now);
-        intent.MarkCompleted("txn_1", "system:test", Now); // already terminal
+        var intent = PaymentIntent.Create(Guid.NewGuid(), new OrderId("order-1"), new GatewayToken("tok_good"), new Money(50m, new CurrencyCode("USD")), "system:test", Now);
+        intent.MarkCompleted(new GatewayTransactionId("txn_1"), "system:test", Now); // already terminal
         _paymentIntents.GetByIdAsync(intent.Id, Arg.Any<CancellationToken>()).Returns(intent);
 
         var handler = CreateHandler();
