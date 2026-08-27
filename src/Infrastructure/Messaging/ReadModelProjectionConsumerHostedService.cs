@@ -123,37 +123,37 @@ public sealed class ReadModelProjectionConsumerHostedService : BackgroundService
         switch (eventType)
         {
             case "PaymentCompleted":
-            {
-                var payload = Deserialize<PaymentCompletedPayload>(json);
-                _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
-                await writer.UpsertOnCompletedAsync(payload.PaymentIntentId, payload.OrderId, payload.TxnId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
-                _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "completed");
-                break;
-            }
+                {
+                    var payload = Deserialize<PaymentCompletedPayload>(json);
+                    _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
+                    await writer.UpsertOnCompletedAsync(payload.PaymentIntentId, payload.OrderId, payload.TxnId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
+                    _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "completed");
+                    break;
+                }
             case "PaymentFailed":
-            {
-                var payload = Deserialize<PaymentFailedPayload>(json);
-                _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
-                await writer.UpsertOnFailedAsync(payload.PaymentIntentId, payload.OrderId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
-                _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "failed");
-                break;
-            }
+                {
+                    var payload = Deserialize<PaymentFailedPayload>(json);
+                    _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
+                    await writer.UpsertOnFailedAsync(payload.PaymentIntentId, payload.OrderId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
+                    _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "failed");
+                    break;
+                }
             case "RefundIssued":
-            {
-                var payload = Deserialize<RefundIssuedPayload>(json);
-                _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, refund {RefundId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, payload.RefundId, eventType);
-                await writer.AppendRefundAsync(payload.PaymentIntentId, payload.RefundId, payload.Amount, now, now, cancellationToken);
-                _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, refund {RefundId} appended", "ReadModelPersisted", payload.PaymentIntentId, payload.RefundId);
-                break;
-            }
+                {
+                    var payload = Deserialize<RefundIssuedPayload>(json);
+                    _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, refund {RefundId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, payload.RefundId, eventType);
+                    await writer.AppendRefundAsync(payload.PaymentIntentId, payload.RefundId, payload.Amount, now, now, cancellationToken);
+                    _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, refund {RefundId} appended", "ReadModelPersisted", payload.PaymentIntentId, payload.RefundId);
+                    break;
+                }
             case "ChargebackReceived":
-            {
-                var payload = Deserialize<ChargebackReceivedPayload>(json);
-                _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
-                await writer.MarkDisputedAsync(payload.PaymentIntentId, now, cancellationToken);
-                _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "disputed");
-                break;
-            }
+                {
+                    var payload = Deserialize<ChargebackReceivedPayload>(json);
+                    _logger.LogInformation("Stage {Stage}: read-model write started for payment intent {PaymentIntentId}, event {EventType}", "ReadModelWriteStarted", payload.PaymentIntentId, eventType);
+                    await writer.MarkDisputedAsync(payload.PaymentIntentId, now, cancellationToken);
+                    _logger.LogInformation("Stage {Stage}: read-model persisted for payment intent {PaymentIntentId}, status {Status}", "ReadModelPersisted", payload.PaymentIntentId, "disputed");
+                    break;
+                }
             default:
                 throw new InvalidOperationException($"Read-model-projection consumer has no handling for event type '{eventType}'.");
         }
