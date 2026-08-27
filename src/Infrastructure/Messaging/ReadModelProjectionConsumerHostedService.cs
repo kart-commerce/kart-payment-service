@@ -100,29 +100,29 @@ public sealed class ReadModelProjectionConsumerHostedService : BackgroundService
         switch (eventType)
         {
             case "PaymentCompleted":
-            {
-                var payload = Deserialize<PaymentCompletedPayload>(json);
-                await writer.UpsertOnCompletedAsync(payload.PaymentIntentId, payload.OrderId, payload.TxnId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
-                break;
-            }
+                {
+                    var payload = Deserialize<PaymentCompletedPayload>(json);
+                    await writer.UpsertOnCompletedAsync(payload.PaymentIntentId, payload.OrderId, payload.TxnId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
+                    break;
+                }
             case "PaymentFailed":
-            {
-                var payload = Deserialize<PaymentFailedPayload>(json);
-                await writer.UpsertOnFailedAsync(payload.PaymentIntentId, payload.OrderId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
-                break;
-            }
+                {
+                    var payload = Deserialize<PaymentFailedPayload>(json);
+                    await writer.UpsertOnFailedAsync(payload.PaymentIntentId, payload.OrderId, payload.CapturedAmount, payload.Currency, now, cancellationToken);
+                    break;
+                }
             case "RefundIssued":
-            {
-                var payload = Deserialize<RefundIssuedPayload>(json);
-                await writer.AppendRefundAsync(payload.PaymentIntentId, payload.RefundId, payload.Amount, now, now, cancellationToken);
-                break;
-            }
+                {
+                    var payload = Deserialize<RefundIssuedPayload>(json);
+                    await writer.AppendRefundAsync(payload.PaymentIntentId, payload.RefundId, payload.Amount, now, now, cancellationToken);
+                    break;
+                }
             case "ChargebackReceived":
-            {
-                var payload = Deserialize<ChargebackReceivedPayload>(json);
-                await writer.MarkDisputedAsync(payload.PaymentIntentId, now, cancellationToken);
-                break;
-            }
+                {
+                    var payload = Deserialize<ChargebackReceivedPayload>(json);
+                    await writer.MarkDisputedAsync(payload.PaymentIntentId, now, cancellationToken);
+                    break;
+                }
             default:
                 throw new InvalidOperationException($"Read-model-projection consumer has no handling for event type '{eventType}'.");
         }
